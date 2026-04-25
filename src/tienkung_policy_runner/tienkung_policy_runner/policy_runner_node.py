@@ -71,8 +71,37 @@ class PolicyRunnerNode(Node):
         self.zero_start_time_sec: float | None = None
         self.zero_start_dof_pos = self.contract.default_dof_pos.copy()
         self.prev_mode = LocalControlMode.STOP
+        self._last_state_ready = False
+        self._last_motion_ready = False
+        self._last_wait_log_time_sec = 0.0
+        self._leg_status_seen = False
+        self._arm_status_seen = False
+        self._imu_seen = False
+        self._joy_seen = False
         self.state_timeout_sec = float(self.get_parameter("state_timeout_sec").value)
         self.motion_timeout_sec = float(self.get_parameter("motion_timeout_sec").value)
+
+        self.get_logger().info(
+            "Policy runner starting with "
+            f"policy_path='{policy_path}', manifest_path='{manifest_path}', "
+            f"device='{self.get_parameter('device').value}', policy_hz={float(self.get_parameter('policy_hz').value):.1f}, "
+            f"state_timeout_sec={self.state_timeout_sec:.3f}, motion_timeout_sec={self.motion_timeout_sec:.3f}"
+        )
+        self.get_logger().info(
+            "Subscribed topics: "
+            f"motion_ref={self.get_parameter('motion_reference_topic').value}, "
+            f"leg_status={self.get_parameter('leg_status_topic').value}, "
+            f"arm_status={self.get_parameter('arm_status_topic').value}, "
+            f"imu={self.get_parameter('imu_status_topic').value}, "
+            f"joy={self.get_parameter('joy_topic').value}"
+        )
+        self.get_logger().info(
+            "Publishing topics: "
+            f"control_mode={self.get_parameter('control_mode_topic').value}, "
+            f"leg_cmd={self.get_parameter('leg_command_topic').value}, "
+            f"arm_cmd={self.get_parameter('arm_command_topic').value}, "
+            f"waist_cmd={self.get_parameter('waist_command_topic').value}"
+        )
 
         self.create_subscription(
             MotionReference,
@@ -133,20 +162,56 @@ class PolicyRunnerNode(Node):
     def _motion_reference_callback(self, msg: MotionReference) -> None:
         body = np.asarray(msg.body_mimic, dtype=np.float32)
         if body.shape[0] == self.contract.n_mimic_obs:
+            if self.last_motion_reference_time_sec <= 0.0:
+                self.get_logger().info(
+                    f"First motion reference received on {self.get_parameter('motion_reference_topic').value} "
+                    f"(dim={body.shape[0]})"
+                )
             self.latest_motion_reference = body
             self.last_motion_reference_time_sec = self._stamp_to_sec()
+        else:
+            self.get_logger().warning(
+                f"Ignoring motion reference with unexpected dim={body.shape[0]}, expected {self.contract.n_mimic_obs}"
+            )
 
     def _leg_status_callback(self, msg: MotorStatusMsg) -> None:
         self.robot_io.ingest_leg_status(msg, self._stamp_to_sec())
+        if not self._leg_status_seen:
+            self._leg_status_seen = True
+            self.get_logger().info(
+                f"First leg status received on {self.get_parameter('leg_status_topic').value} "
+                f"(motors={len(getattr(msg, 'status', []))})"
+            )
 
     def _arm_status_callback(self, msg: MotorStatusMsg) -> None:
         self.robot_io.ingest_arm_status(msg, self._stamp_to_sec())
+        if not self._arm_status_seen:
+            self._arm_status_seen = True
+            self.get_logger().info(
+                f"First arm status received on {self.get_parameter('arm_status_topic').value} "
+                f"(motors={len(getattr(msg, 'status', []))})"
+            )
 
     def _imu_callback(self, msg: BodyImu) -> None:
         self.robot_io.ingest_imu(msg, self._stamp_to_sec())
+        if not self._imu_seen:
+            self._imu_seen = True
+            self.get_logger().info(
+                f"First IMU status received on {self.get_parameter('imu_status_topic').value}"
+            )
 
     def _joy_callback(self, msg: Joy) -> None:
         self.robot_io.ingest_joy(msg)
+        if not self._joy_seen:
+            self._joy_seen = True
+            self.get_logger().info(
+                f"First joystick message received on {self.get_parameter('joy_topic').value} "
+                f"(axes={len(getattr(msg, 'axes', []))}, buttons={len(getattr(msg, 'buttons', []))})"
+            )
+
+    @staticmethod
+    def _mode_name(mode: LocalControlMode) -> str:
+        return mode.name
 
     def _publish_control_mode(self, mode: LocalControlMode) -> None:
         msg = ControlMode()
@@ -168,8 +233,47 @@ class PolicyRunnerNode(Node):
 
         state_ready = (now_sec - state.timestamp_sec) <= self.state_timeout_sec and state.timestamp_sec > 0.0
         motion_ready = (now_sec - self.last_motion_reference_time_sec) <= self.motion_timeout_sec and self.last_motion_reference_time_sec > 0.0
+        if state_ready != self._last_state_ready:
+            if state_ready:
+                self.get_logger().info("State inputs are ready")
+            else:
+                age = now_sec - state.timestamp_sec if state.timestamp_sec > 0.0 else float("inf")
+                age_str = f"{age:.3f}s" if np.isfinite(age) else "never"
+                self.get_logger().warning(f"State inputs timed out or missing (age={age_str})")
+            self._last_state_ready = state_ready
+
+        if motion_ready != self._last_motion_ready:
+            if motion_ready:
+                self.get_logger().info("Motion reference is ready")
+            else:
+                age = (
+                    now_sec - self.last_motion_reference_time_sec
+                    if self.last_motion_reference_time_sec > 0.0
+                    else float("inf")
+                )
+                age_str = f"{age:.3f}s" if np.isfinite(age) else "never"
+                self.get_logger().warning(f"Motion reference timed out or missing (age={age_str})")
+            self._last_motion_ready = motion_ready
+
         mode = self.fsm.update(now_sec, joy, state_ready, motion_ready, True)
+        if joy.requested_mode == LocalControlMode.POLICY and mode != LocalControlMode.POLICY:
+            if (now_sec - self._last_wait_log_time_sec) >= 1.0:
+                reasons = []
+                if not state_ready:
+                    reasons.append("state not ready")
+                if not motion_ready:
+                    reasons.append("motion reference not ready")
+                wait_reason = ", ".join(reasons) if reasons else "zero transition not finished"
+                self.get_logger().warning(
+                    f"POLICY requested but not entered yet: {wait_reason}"
+                )
+                self._last_wait_log_time_sec = now_sec
+
         self._publish_control_mode(mode)
+        if mode != self.prev_mode:
+            self.get_logger().info(
+                f"Control mode changed: {self._mode_name(self.prev_mode)} -> {self._mode_name(mode)}"
+            )
 
         if mode == LocalControlMode.ZERO and self.prev_mode != LocalControlMode.ZERO:
             self.zero_start_time_sec = now_sec
