@@ -30,6 +30,7 @@ class PolicyRunnerNode(Node):
         self.declare_parameter("zero_duration_sec", 2.0)
         self.declare_parameter("state_timeout_sec", 0.1)
         self.declare_parameter("motion_timeout_sec", 0.1)
+        self.declare_parameter("require_motion_source", False)
         self.declare_parameter("motion_reference_topic", "/tienkung/motion_reference")
         self.declare_parameter("control_mode_topic", "/tienkung/control_mode")
         self.declare_parameter("leg_status_topic", "/leg/status")
@@ -80,6 +81,8 @@ class PolicyRunnerNode(Node):
         self._joy_seen = False
         self.state_timeout_sec = float(self.get_parameter("state_timeout_sec").value)
         self.motion_timeout_sec = float(self.get_parameter("motion_timeout_sec").value)
+        self.require_motion_source = bool(self.get_parameter("require_motion_source").value)
+        self._motion_fallback_logged = False
 
         self.get_logger().info(
             "Policy runner starting with "
@@ -232,7 +235,10 @@ class PolicyRunnerNode(Node):
             return
 
         state_ready = (now_sec - state.timestamp_sec) <= self.state_timeout_sec and state.timestamp_sec > 0.0
-        motion_ready = (now_sec - self.last_motion_reference_time_sec) <= self.motion_timeout_sec and self.last_motion_reference_time_sec > 0.0
+        if self.require_motion_source:
+            motion_ready = (now_sec - self.last_motion_reference_time_sec) <= self.motion_timeout_sec and self.last_motion_reference_time_sec > 0.0
+        else:
+            motion_ready = True
         if state_ready != self._last_state_ready:
             if state_ready:
                 self.get_logger().info("State inputs are ready")
@@ -274,6 +280,11 @@ class PolicyRunnerNode(Node):
             self.get_logger().info(
                 f"Control mode changed: {self._mode_name(self.prev_mode)} -> {self._mode_name(mode)}"
             )
+            if mode == LocalControlMode.POLICY and not self.require_motion_source and self.last_motion_reference_time_sec <= 0.0 and not self._motion_fallback_logged:
+                self.get_logger().info(
+                    "No motion reference received — using DEFAULT_MIMIC_OBS_TIENKUNG as motion fallback"
+                )
+                self._motion_fallback_logged = True
 
         if mode == LocalControlMode.ZERO and self.prev_mode != LocalControlMode.ZERO:
             self.zero_start_time_sec = now_sec
