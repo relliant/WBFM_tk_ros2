@@ -78,3 +78,12 @@ def get_robot_contract(name: str) -> RobotContract:
 
 def project_root() -> Path:
     return Path(__file__).resolve().parents[4]
+
+
+DEFAULT_MIMIC_OBS_TIENKUNG: np.ndarray = np.concatenate([
+    np.array([0.0, 0.0], dtype=np.float32),   # xy velocity
+    np.array([1.0], dtype=np.float32),          # z position
+    np.array([0.0, 0.0], dtype=np.float32),    # roll/pitch
+    np.array([0.0], dtype=np.float32),          # yaw angular velocity
+    ROBOT_CONTRACTS["tienkung"].default_dof_pos,  # 20 dof
+]).astype(np.float32)

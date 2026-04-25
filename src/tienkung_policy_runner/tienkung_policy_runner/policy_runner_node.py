@@ -16,7 +16,7 @@ from .fsm import ControlMode as LocalControlMode, PolicyFSM
 from .manifest_loader import load_manifest, validate_manifest_against_contract
 from .obs_builder import TienkungObservationBuilder, postprocess_action
 from .onnx_runtime import OnnxPolicyRunner
-from .robot_contract import get_robot_contract
+from .robot_contract import DEFAULT_MIMIC_OBS_TIENKUNG, get_robot_contract
 from .robot_io import JointMap, RobotIO, default_gains
 
 
@@ -63,7 +63,7 @@ class PolicyRunnerNode(Node):
         self.kp, self.kd = default_gains(self.contract)
 
         self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
-        self.latest_motion_reference = np.zeros(self.contract.n_mimic_obs, dtype=np.float32)
+        self.latest_motion_reference = DEFAULT_MIMIC_OBS_TIENKUNG.copy()
         self.last_motion_reference_time_sec = 0.0
         self.state_timeout_sec = float(self.get_parameter("state_timeout_sec").value)
         self.motion_timeout_sec = float(self.get_parameter("motion_timeout_sec").value)
