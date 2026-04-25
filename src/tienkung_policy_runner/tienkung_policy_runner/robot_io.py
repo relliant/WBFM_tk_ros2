@@ -7,6 +7,11 @@ import numpy as np
 import yaml
 from bodyctrl_msgs.msg import CmdMotorCtrl, CmdSetMotorPosition, MotorCtrl, SetMotorPosition
 
+from .ankle_transmission import (
+    LinearJointTransmission,
+    apply_joint_command_transmissions,
+    apply_motor_state_transmissions,
+)
 from .fsm import JoystickCommand, decode_joy_message
 from .robot_contract import RobotContract, get_robot_contract
 
@@ -22,12 +27,21 @@ class BodyState:
 
 
 class JointMap:
-    def __init__(self, can_id_by_index: List[int], policy_name_by_index: List[str], leg_indices: List[int], arm_indices: List[int], waist_ids: List[int]) -> None:
+    def __init__(
+        self,
+        can_id_by_index: List[int],
+        policy_name_by_index: List[str],
+        leg_indices: List[int],
+        arm_indices: List[int],
+        waist_ids: List[int],
+        ankle_transmissions: Optional[List[LinearJointTransmission]] = None,
+    ) -> None:
         self.can_id_by_index = list(can_id_by_index)
         self.policy_name_by_index = list(policy_name_by_index)
         self.leg_indices = list(leg_indices)
         self.arm_indices = list(arm_indices)
         self.waist_ids = list(waist_ids)
+        self.ankle_transmissions = list(ankle_transmissions or [])
         self.index_by_can_id = {can_id: idx for idx, can_id in enumerate(self.can_id_by_index)}
 
     @classmethod
@@ -41,6 +55,10 @@ class JointMap:
             leg_indices=data["leg_indices"],
             arm_indices=data["arm_indices"],
             waist_ids=data.get("waist_ids", [31]),
+            ankle_transmissions=[
+                LinearJointTransmission.from_dict(item)
+                for item in data.get("ankle_transmissions", [])
+            ],
         )
 
 
@@ -67,6 +85,12 @@ class RobotIO:
             self.dof_pos[index] = float(status.pos)
             self.dof_vel[index] = float(status.speed)
             self.dof_torque[index] = float(getattr(status, "current", 0.0))
+        self.dof_pos, self.dof_vel, self.dof_torque = apply_motor_state_transmissions(
+            self.dof_pos,
+            self.dof_vel,
+            self.dof_torque,
+            self.joint_map.ankle_transmissions,
+        )
         self.last_state_time_sec = max(self.last_state_time_sec, stamp_sec)
 
     def ingest_leg_status(self, msg: Any, stamp_sec: float) -> None:
@@ -103,15 +127,20 @@ class RobotIO:
         kp = np.asarray(kp, dtype=np.float32)
         kd = np.asarray(kd, dtype=np.float32)
         torques = np.zeros_like(target_dof_pos) if torques is None else np.asarray(torques, dtype=np.float32)
+        motor_target_dof_pos, motor_torques = apply_joint_command_transmissions(
+            target_dof_pos,
+            torques,
+            self.joint_map.ankle_transmissions,
+        )
         return {
             "leg": [
                 {
                     "name": self.joint_map.can_id_by_index[index],
                     "kp": float(kp[index]),
                     "kd": float(kd[index]),
-                    "pos": float(target_dof_pos[index]),
+                    "pos": float(motor_target_dof_pos[index]),
                     "spd": 0.0,
-                    "tor": float(torques[index]),
+                    "tor": float(motor_torques[index]),
                 }
                 for index in self.joint_map.leg_indices
             ],
@@ -120,9 +149,9 @@ class RobotIO:
                     "name": self.joint_map.can_id_by_index[index],
                     "kp": float(kp[index]),
                     "kd": float(kd[index]),
-                    "pos": float(target_dof_pos[index]),
+                    "pos": float(motor_target_dof_pos[index]),
                     "spd": 0.0,
-                    "tor": float(torques[index]),
+                    "tor": float(motor_torques[index]),
                 }
                 for index in self.joint_map.arm_indices
             ],

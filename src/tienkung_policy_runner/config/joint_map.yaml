@@ -44,4 +44,17 @@ joint_map:
     - elbow_pitch_r_joint
   leg_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   arm_indices: [12, 13, 14, 15, 16, 17, 18, 19]
+  ankle_transmissions:
+    - name: left_ankle
+      motor_indices: [4, 5]
+      joint_indices: [4, 5]
+      motor_to_joint:
+        - [0.5, 0.5]
+        - [0.5, -0.5]
+    - name: right_ankle
+      motor_indices: [10, 11]
+      joint_indices: [10, 11]
+      motor_to_joint:
+        - [0.5, 0.5]
+        - [0.5, -0.5]
   waist_ids: [31]

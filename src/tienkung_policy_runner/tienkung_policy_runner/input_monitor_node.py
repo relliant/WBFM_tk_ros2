@@ -37,6 +37,7 @@ from sensor_msgs.msg import Joy
 
 from tienkung_interfaces.msg import ControlMode, MotionReference
 
+from .ankle_transmission import apply_motor_state_transmissions
 from .robot_contract import DEFAULT_MIMIC_OBS_TIENKUNG, get_robot_contract
 from .robot_io import JointMap
 
@@ -274,6 +275,7 @@ class InputMonitorNode(Node):
             leg_age = self._age(self._leg_last_stamp)
             leg_pos = self._leg_pos.copy()
             leg_vel = self._leg_vel.copy()
+            leg_torque = self._leg_torque.copy()
 
             arm_count = self._arm_recv_count
             arm_age = self._age(self._arm_last_stamp)
@@ -294,6 +296,13 @@ class InputMonitorNode(Node):
 
             mode_count = self._mode_recv_count
             latest_mode = self._latest_mode
+
+        leg_pos, leg_vel, leg_torque = apply_motor_state_transmissions(
+            leg_pos,
+            leg_vel,
+            leg_torque,
+            self._joint_map.ankle_transmissions,
+        )
 
         mode_str = self._MODE_NAMES.get(latest_mode, "?") if latest_mode is not None else "N/A"
 
