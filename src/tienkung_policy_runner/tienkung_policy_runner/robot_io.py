@@ -8,11 +8,13 @@ import yaml
 from bodyctrl_msgs.msg import CmdMotorCtrl, CmdSetMotorPosition, MotorCtrl, SetMotorPosition
 
 from .ankle_transmission import (
-    LinearJointTransmission,
+    JointTransmission,
     apply_joint_command_transmissions,
     apply_motor_state_transmissions,
+    transmission_from_dict,
 )
 from .fsm import JoystickCommand, decode_joy_message
+from .motor_calibration import MotorCalibration
 from .robot_contract import RobotContract, get_robot_contract
 
 
@@ -34,7 +36,8 @@ class JointMap:
         leg_indices: List[int],
         arm_indices: List[int],
         waist_ids: List[int],
-        ankle_transmissions: Optional[List[LinearJointTransmission]] = None,
+        ankle_transmissions: Optional[List[JointTransmission]] = None,
+        motor_calibration: MotorCalibration | None = None,
     ) -> None:
         self.can_id_by_index = list(can_id_by_index)
         self.policy_name_by_index = list(policy_name_by_index)
@@ -42,6 +45,7 @@ class JointMap:
         self.arm_indices = list(arm_indices)
         self.waist_ids = list(waist_ids)
         self.ankle_transmissions = list(ankle_transmissions or [])
+        self.motor_calibration = motor_calibration or MotorCalibration.from_dict({}, len(self.can_id_by_index))
         self.index_by_can_id = {can_id: idx for idx, can_id in enumerate(self.can_id_by_index)}
 
     @classmethod
@@ -56,9 +60,13 @@ class JointMap:
             arm_indices=data["arm_indices"],
             waist_ids=data.get("waist_ids", [31]),
             ankle_transmissions=[
-                LinearJointTransmission.from_dict(item)
+                transmission_from_dict(item)
                 for item in data.get("ankle_transmissions", [])
             ],
+            motor_calibration=MotorCalibration.from_dict(
+                data.get("motor_calibration", {}),
+                len(data["can_id_by_index"]),
+            ),
         )
 
 
@@ -69,6 +77,14 @@ class RobotIO:
         self.reset()
 
     def reset(self) -> None:
+        self._motor_pos_raw = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_vel_raw = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_current_raw = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_pos_last = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_vel_last = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_current_last = np.zeros(self.contract.num_actions, dtype=np.float32)
+        self._motor_valid_mask = np.zeros(self.contract.num_actions, dtype=bool)
+        self._zero_cnt = np.zeros(self.contract.num_actions, dtype=np.float32)
         self.dof_pos = np.zeros(self.contract.num_actions, dtype=np.float32)
         self.dof_vel = np.zeros(self.contract.num_actions, dtype=np.float32)
         self.dof_torque = np.zeros(self.contract.num_actions, dtype=np.float32)
@@ -82,13 +98,41 @@ class RobotIO:
             index = self.joint_map.index_by_can_id.get(int(status.name))
             if index is None:
                 continue
-            self.dof_pos[index] = float(status.pos)
-            self.dof_vel[index] = float(status.speed)
-            self.dof_torque[index] = float(getattr(status, "current", 0.0))
+            self._motor_pos_raw[index] = float(status.pos)
+            self._motor_vel_raw[index] = float(status.speed)
+            self._motor_current_raw[index] = float(getattr(status, "current", 0.0))
+        (
+            self._motor_pos_raw,
+            self._motor_vel_raw,
+            self._motor_current_raw,
+            self._motor_valid_mask,
+        ) = self.joint_map.motor_calibration.reject_large_position_jumps(
+            self._motor_pos_raw,
+            self._motor_vel_raw,
+            self._motor_current_raw,
+            self._motor_pos_last,
+            self._motor_vel_last,
+            self._motor_current_last,
+            self._motor_valid_mask,
+        )
+        self._motor_pos_last = self._motor_pos_raw.copy()
+        self._motor_vel_last = self._motor_vel_raw.copy()
+        self._motor_current_last = self._motor_current_raw.copy()
+        (
+            calibrated_pos,
+            calibrated_vel,
+            calibrated_torque,
+            self._zero_cnt,
+        ) = self.joint_map.motor_calibration.convert_feedback(
+            self._motor_pos_raw,
+            self._motor_vel_raw,
+            self._motor_current_raw,
+            self._zero_cnt,
+        )
         self.dof_pos, self.dof_vel, self.dof_torque = apply_motor_state_transmissions(
-            self.dof_pos,
-            self.dof_vel,
-            self.dof_torque,
+            calibrated_pos,
+            calibrated_vel,
+            calibrated_torque,
             self.joint_map.ankle_transmissions,
         )
         self.last_state_time_sec = max(self.last_state_time_sec, stamp_sec)
@@ -122,15 +166,30 @@ class RobotIO:
             timestamp_sec=self.last_state_time_sec,
         )
 
-    def build_command_dict(self, target_dof_pos: np.ndarray, kp: np.ndarray, kd: np.ndarray, torques: Optional[np.ndarray] = None) -> Dict[str, Any]:
+    def build_command_dict(
+        self,
+        target_dof_pos: np.ndarray,
+        kp: np.ndarray,
+        kd: np.ndarray,
+        target_dof_vel: Optional[np.ndarray] = None,
+        torques: Optional[np.ndarray] = None,
+    ) -> Dict[str, Any]:
         target_dof_pos = np.asarray(target_dof_pos, dtype=np.float32)
         kp = np.asarray(kp, dtype=np.float32)
         kd = np.asarray(kd, dtype=np.float32)
+        target_dof_vel = np.zeros_like(target_dof_pos) if target_dof_vel is None else np.asarray(target_dof_vel, dtype=np.float32)
         torques = np.zeros_like(target_dof_pos) if torques is None else np.asarray(torques, dtype=np.float32)
-        motor_target_dof_pos, motor_torques = apply_joint_command_transmissions(
+        motor_joint_pos, motor_joint_vel, motor_joint_torques = apply_joint_command_transmissions(
             target_dof_pos,
+            target_dof_vel,
             torques,
             self.joint_map.ankle_transmissions,
+        )
+        motor_target_dof_pos, motor_target_dof_vel, motor_torques = self.joint_map.motor_calibration.convert_command(
+            motor_joint_pos,
+            motor_joint_vel,
+            motor_joint_torques,
+            self._zero_cnt,
         )
         return {
             "leg": [
@@ -139,7 +198,7 @@ class RobotIO:
                     "kp": float(kp[index]),
                     "kd": float(kd[index]),
                     "pos": float(motor_target_dof_pos[index]),
-                    "spd": 0.0,
+                    "spd": float(motor_target_dof_vel[index]),
                     "tor": float(motor_torques[index]),
                 }
                 for index in self.joint_map.leg_indices
@@ -150,7 +209,7 @@ class RobotIO:
                     "kp": float(kp[index]),
                     "kd": float(kd[index]),
                     "pos": float(motor_target_dof_pos[index]),
-                    "spd": 0.0,
+                    "spd": float(motor_target_dof_vel[index]),
                     "tor": float(motor_torques[index]),
                 }
                 for index in self.joint_map.arm_indices

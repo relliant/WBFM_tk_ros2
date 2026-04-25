@@ -18,17 +18,17 @@ def generate_launch_description() -> LaunchDescription:
             remappings=[('joy', '/sbus_data')],
             output='screen',
         ),
-        Node(
-            package='tienkung_motion_source',
-            executable='motion_source_node',
-            name='tienkung_motion_source',
-            output='screen',
-            parameters=[
-                {
-                    'motion_file': LaunchConfiguration('motion_file'),
-                }
-            ],
-        ),
+        # Node(
+        #     package='tienkung_motion_source',
+        #     executable='motion_source_node',
+        #     name='tienkung_motion_source',
+        #     output='screen',
+        #     parameters=[
+        #         {
+        #             'motion_file': LaunchConfiguration('motion_file'),
+        #         }
+        #     ],
+        # ),
         Node(
             package='tienkung_policy_runner',
             executable='policy_runner_node',

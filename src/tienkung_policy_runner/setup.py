@@ -14,6 +14,15 @@ setup(
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('share', package_name, 'test'), glob('test/*.py')),
     ],
+    package_data={
+        package_name: [
+            'native/*.cpp',
+            'native/third_party/*.h',
+            'native/lib/*.so',
+            'native/lib/*.so.*',
+        ],
+    },
+    include_package_data=True,
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='DedSecer',

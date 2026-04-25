@@ -44,17 +44,20 @@ joint_map:
     - elbow_pitch_r_joint
   leg_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
   arm_indices: [12, 13, 14, 15, 16, 17, 18, 19]
+  motor_calibration:
+    zero_pos_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    zero_offset: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    motor_dir: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    ct_scale: [2.1, 2.1, 3.207, 2.673, 2.6, 2.6, 2.1, 2.1, 3.207, 2.673, 2.6, 2.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    wrap_threshold_rad: 3.141592653589793
+    enable_jump_filter: true
   ankle_transmissions:
-    - name: left_ankle
-      motor_indices: [4, 5]
-      joint_indices: [4, 5]
-      motor_to_joint:
-        - [0.5, 0.5]
-        - [0.5, -0.5]
-    - name: right_ankle
-      motor_indices: [10, 11]
-      joint_indices: [10, 11]
-      motor_to_joint:
-        - [0.5, 0.5]
-        - [0.5, -0.5]
+    - name: ankle_block
+      kind: native_funcsptrans
+      motor_indices: [4, 5, 10, 11]
+      joint_indices: [4, 5, 10, 11]
+      require_native: true
+      funcsptrans_library: ""
+      wrapper_library: ""
+      eigen_include: ""
   waist_ids: [31]
