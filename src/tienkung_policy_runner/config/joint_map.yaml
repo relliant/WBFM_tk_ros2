@@ -1,0 +1,47 @@
+joint_map:
+  can_id_by_index: [51, 52, 53, 54, 55, 56, 61, 62, 63, 64, 65, 66, 11, 12, 13, 14, 21, 22, 23, 24]
+  ros_lite_name_by_index:
+    - l_hip_roll
+    - l_hip_pitch
+    - l_hip_yaw
+    - l_knee
+    - l_ankle_pitch
+    - l_ankle_roll
+    - r_hip_roll
+    - r_hip_pitch
+    - r_hip_yaw
+    - r_knee
+    - r_ankle_pitch
+    - r_ankle_roll
+    - l_shoulder_pitch
+    - l_shoulder_roll
+    - l_shoulder_yaw
+    - l_elbow
+    - r_shoulder_pitch
+    - r_shoulder_roll
+    - r_shoulder_yaw
+    - r_elbow
+  policy_name_by_index:
+    - hip_roll_l_joint
+    - hip_pitch_l_joint
+    - hip_yaw_l_joint
+    - knee_pitch_l_joint
+    - ankle_pitch_l_joint
+    - ankle_roll_l_joint
+    - hip_roll_r_joint
+    - hip_pitch_r_joint
+    - hip_yaw_r_joint
+    - knee_pitch_r_joint
+    - ankle_pitch_r_joint
+    - ankle_roll_r_joint
+    - shoulder_pitch_l_joint
+    - shoulder_roll_l_joint
+    - shoulder_yaw_l_joint
+    - elbow_pitch_l_joint
+    - shoulder_pitch_r_joint
+    - shoulder_roll_r_joint
+    - shoulder_yaw_r_joint
+    - elbow_pitch_r_joint
+  leg_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  arm_indices: [12, 13, 14, 15, 16, 17, 18, 19]
+  waist_ids: [31]

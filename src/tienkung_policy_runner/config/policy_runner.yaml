@@ -1,0 +1,19 @@
+policy_runner:
+  ros__parameters:
+    robot: tienkung
+    device: cpu
+    policy_path: ""
+    manifest_path: ""
+    policy_hz: 50.0
+    zero_duration_sec: 2.0
+    state_timeout_sec: 0.1
+    motion_timeout_sec: 0.1
+    motion_reference_topic: /tienkung/motion_reference
+    control_mode_topic: /tienkung/control_mode
+    leg_status_topic: /leg/status
+    arm_status_topic: /arm/status
+    imu_status_topic: /imu/status
+    joy_topic: /sbus_data
+    leg_command_topic: /leg/cmd_ctrl
+    arm_command_topic: /arm/cmd_ctrl
+    waist_command_topic: /waist/cmd_pos

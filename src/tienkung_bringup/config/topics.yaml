@@ -1,0 +1,10 @@
+topics:
+  motion_reference: /tienkung/motion_reference
+  control_mode: /tienkung/control_mode
+  joy: /sbus_data
+  leg_status: /leg/status
+  arm_status: /arm/status
+  imu_status: /imu/status
+  leg_command: /leg/cmd_ctrl
+  arm_command: /arm/cmd_ctrl
+  waist_command: /waist/cmd_pos

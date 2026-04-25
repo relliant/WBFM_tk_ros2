@@ -1,0 +1,12 @@
+motion_source:
+  ros__parameters:
+    robot: tienkung
+    motion_file: ""
+    publish_hz: 50.0
+    control_dt: 0.02
+    start_paused: true
+    loop: true
+    send_start_frame_as_end_frame: false
+    future_steps: [1]
+    control_mode_topic: /tienkung/control_mode
+    motion_reference_topic: /tienkung/motion_reference
