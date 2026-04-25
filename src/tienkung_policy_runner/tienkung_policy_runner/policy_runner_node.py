@@ -61,10 +61,16 @@ class PolicyRunnerNode(Node):
         self.obs_builder = TienkungObservationBuilder(self.contract)
         self.fsm = PolicyFSM(float(self.get_parameter("zero_duration_sec").value))
         self.kp, self.kd = default_gains(self.contract)
+        self.zero_traj_duration_sec = max(
+            1e-3, float(self.get_parameter("zero_duration_sec").value)
+        )
 
         self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
         self.latest_motion_reference = DEFAULT_MIMIC_OBS_TIENKUNG.copy()
         self.last_motion_reference_time_sec = 0.0
+        self.zero_start_time_sec: float | None = None
+        self.zero_start_dof_pos = self.contract.default_dof_pos.copy()
+        self.prev_mode = LocalControlMode.STOP
         self.state_timeout_sec = float(self.get_parameter("state_timeout_sec").value)
         self.motion_timeout_sec = float(self.get_parameter("motion_timeout_sec").value)
 
@@ -148,6 +154,11 @@ class PolicyRunnerNode(Node):
         msg.mode = int(mode.value)
         self.control_mode_pub.publish(msg)
 
+    @staticmethod
+    def _quintic_blend(alpha: float) -> float:
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        return alpha * alpha * alpha * (10.0 - 15.0 * alpha + 6.0 * alpha * alpha)
+
     def _tick(self) -> None:
         now_sec = self._stamp_to_sec()
         state = self.robot_io.snapshot()
@@ -160,10 +171,30 @@ class PolicyRunnerNode(Node):
         mode = self.fsm.update(now_sec, joy, state_ready, motion_ready, True)
         self._publish_control_mode(mode)
 
+        if mode == LocalControlMode.ZERO and self.prev_mode != LocalControlMode.ZERO:
+            self.zero_start_time_sec = now_sec
+            self.zero_start_dof_pos = state.dof_pos.copy()
+        elif mode != LocalControlMode.ZERO:
+            self.zero_start_time_sec = None
+
         if mode == LocalControlMode.STOP:
             target = state.dof_pos.copy()
         elif mode == LocalControlMode.ZERO:
-            target = self.contract.default_dof_pos.copy()
+            if self.zero_start_time_sec is None:
+                self.zero_start_time_sec = now_sec
+                self.zero_start_dof_pos = state.dof_pos.copy()
+
+            alpha = np.clip(
+                (now_sec - self.zero_start_time_sec) / self.zero_traj_duration_sec,
+                0.0,
+                1.0,
+            )
+            blend = self._quintic_blend(float(alpha))
+            target = (
+                self.zero_start_dof_pos
+                + (self.contract.default_dof_pos - self.zero_start_dof_pos) * blend
+            ).astype(np.float32)
+            self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
         else:
             obs = self.obs_builder.build_observation(
                 self.latest_motion_reference,
@@ -177,6 +208,9 @@ class PolicyRunnerNode(Node):
             self.last_action = np.asarray(raw_action, dtype=np.float32)
             target = postprocess_action(raw_action, self.contract)
 
+        if mode == LocalControlMode.STOP:
+            self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
+
         leg_msg, arm_msg, waist_msg = self.robot_io.build_ros_messages(
             self,
             self.robot_io.build_command_dict(target, self.kp, self.kd),
@@ -184,6 +218,7 @@ class PolicyRunnerNode(Node):
         self.leg_cmd_pub.publish(leg_msg)
         self.arm_cmd_pub.publish(arm_msg)
         self.waist_cmd_pub.publish(waist_msg)
+        self.prev_mode = mode
 
 
 def main(args: list[str] | None = None) -> None:

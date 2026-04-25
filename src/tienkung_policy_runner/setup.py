@@ -23,6 +23,8 @@ setup(
     entry_points={
         'console_scripts': [
             'policy_runner_node = tienkung_policy_runner.policy_runner_node:main',
+            'input_monitor_node = tienkung_policy_runner.input_monitor_node:main',
+            'dry_run_node       = tienkung_policy_runner.dry_run_node:main',
         ],
     },
 )
