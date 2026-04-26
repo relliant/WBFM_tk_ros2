@@ -77,18 +77,37 @@ class MotionLibAdapter:
             motion_data = pickle.load(file)
         self.fps = float(motion_data["fps"])
         self.root_pos = np.asarray(motion_data["root_pos"], dtype=np.float32)
-        self.root_rot = np.asarray(motion_data["root_rot"], dtype=np.float32)
+        # convert xyzw (Isaac Gym convention) to wxyz
+        root_rot_xyzw = np.asarray(motion_data["root_rot"], dtype=np.float32)
+        self.root_rot = np.concatenate([root_rot_xyzw[:, 3:4], root_rot_xyzw[:, :3]], axis=1)
         self.dof_pos = np.asarray(motion_data["dof_pos"], dtype=np.float32)
         self.num_frames = self.root_pos.shape[0]
         self.dt = 1.0 / self.fps
         self.length_sec = self.dt * max(0, self.num_frames - 1)
         self.root_vel = np.gradient(self.root_pos, self.dt, axis=0).astype(np.float32)
-        self.root_ang_vel = self._estimate_root_ang_vel()
+        self.root_ang_vel = self._compute_so3_angular_velocity()
         self.contract = get_robot_contract("tienkung")
 
-    def _estimate_root_ang_vel(self) -> np.ndarray:
-        eulers = np.stack([quat_to_euler_wxyz(q) for q in self.root_rot], axis=0)
-        return np.gradient(eulers, self.dt, axis=0).astype(np.float32)
+    def _compute_so3_angular_velocity(self) -> np.ndarray:
+        # SO3 derivative via central differences (wxyz convention)
+        if self.num_frames < 3:
+            q_rel = np.stack([quat_multiply_wxyz(quat_conjugate_wxyz(self.root_rot[i]), self.root_rot[i + 1])
+                              for i in range(self.num_frames - 1)])
+            omega = np.stack([2.0 * q[1:] / self.dt for q in q_rel])  # small-angle approx
+            return np.concatenate([omega, omega[-1:]], axis=0).astype(np.float32)
+
+        def _quat_diff_wxyz(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+            # q_rel = q2 * q1^-1, returns rotation vector via small-angle
+            q_rel = quat_multiply_wxyz(q2, quat_conjugate_wxyz(q1))
+            # ensure positive w for shortest path
+            q_rel = np.where(q_rel[:, 0:1] < 0, -q_rel, q_rel)
+            return q_rel[:, 1:]  # xyz part ≈ half rotation vector for small angles
+
+        # interior: central differences
+        omega_interior = _quat_diff_wxyz(self.root_rot[:-2], self.root_rot[2:]) / (2.0 * self.dt) * 2.0
+        omega_start = _quat_diff_wxyz(self.root_rot[:1], self.root_rot[1:2]) / self.dt * 2.0
+        omega_end = _quat_diff_wxyz(self.root_rot[-2:-1], self.root_rot[-1:]) / self.dt * 2.0
+        return np.concatenate([omega_start, omega_interior, omega_end], axis=0).astype(np.float32)
 
     def get_motion_length(self) -> float:
         return self.length_sec
