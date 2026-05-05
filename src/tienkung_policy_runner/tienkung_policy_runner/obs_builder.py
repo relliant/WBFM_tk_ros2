@@ -38,13 +38,11 @@ class TienkungObservationBuilder:
         dof_vel = np.asarray(dof_vel, dtype=np.float32)
         last_action = np.asarray(last_action, dtype=np.float32)
 
-        obs_body_dof_vel = dof_vel.copy()
-        obs_body_dof_vel[self.contract.ankle_indices] = 0.0
         proprio = np.concatenate([
             ang_vel * 0.25,
             rpy[:2],
             dof_pos - self.contract.default_dof_pos,
-            obs_body_dof_vel * 0.05,
+            dof_vel * 0.05,
             last_action,
         ]).astype(np.float32)
         if proprio.shape[0] != self.contract.n_proprio:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +68,12 @@ class PolicyRunnerNode(Node):
         )
 
         self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
+        # action_delay_steps: match training action_delay_range=[0,3]; 1 step = 20ms
+        self._action_delay_steps = 1
+        self._action_buf: deque[np.ndarray] = deque(
+            [np.zeros(self.contract.num_actions, dtype=np.float32)] * (self._action_delay_steps + 1),
+            maxlen=self._action_delay_steps + 1,
+        )
         self.latest_motion_reference = DEFAULT_MIMIC_OBS_TIENKUNG.copy()
         self.last_motion_reference_time_sec = 0.0
         self.zero_start_time_sec: float | None = None
@@ -319,12 +326,17 @@ class PolicyRunnerNode(Node):
                 state.dof_vel,
                 self.last_action,
             )
-            raw_action = self.policy.infer(obs)[0]
-            self.last_action = np.asarray(raw_action, dtype=np.float32)
-            target = postprocess_action(raw_action, self.contract)
+            raw_action = np.asarray(self.policy.infer(obs)[0], dtype=np.float32)
+            self._action_buf.append(raw_action)
+            delayed_action = self._action_buf[0]
+            self.last_action = delayed_action
+            target = postprocess_action(delayed_action, self.contract)
 
         if mode == LocalControlMode.STOP:
             self.last_action = np.zeros(self.contract.num_actions, dtype=np.float32)
+            self._action_buf.extend(
+                [np.zeros(self.contract.num_actions, dtype=np.float32)] * (self._action_delay_steps + 1)
+            )
 
         leg_msg, arm_msg, waist_msg = self.robot_io.build_ros_messages(
             self,
